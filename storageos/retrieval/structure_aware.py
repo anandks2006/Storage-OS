@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections import defaultdict
 
 from core.models import EvidenceItem, RetrievalResult
 from storage.database import Database
@@ -18,9 +19,20 @@ class StructureAwareRetriever:
         nodes_visited = 0
         passages_considered = 0
         bytes_read = 0
+        fallback_used = False
 
         resources = self.db.get_all_resources()
         files_considered = len(resources)
+
+        # Batch-fetch all nodes and passages once (avoids N+1 queries)
+        all_nodes = self.db.get_all_nodes()
+        all_passages = self.db.get_all_passages()
+        nodes_by_res = defaultdict(list)
+        for n in all_nodes:
+            nodes_by_res[n["resource_id"]].append(n)
+        passages_by_res = defaultdict(list)
+        for p in all_passages:
+            passages_by_res[p["resource_id"]].append(p)
 
         # Phase 1: narrow to candidate documents using heading/title matches
         query_lower = query.lower()
@@ -29,7 +41,7 @@ class StructureAwareRetriever:
         candidate_resources = []
         for res in resources:
             res_id = res["resource_id"]
-            nodes = self.db.get_nodes_for_resource(res_id)
+            nodes = nodes_by_res.get(res_id, [])
             nodes_visited += len(nodes)
 
             # Check if any heading matches query tokens
@@ -48,23 +60,56 @@ class StructureAwareRetriever:
 
             candidate_resources.append((res_id, score, res))
 
-        # Sort by score, take top candidates (minimum 20% of corpus or all if few)
+        # Step 1 fix: retain only positively-scored candidates
+        # Fallback: if zero scored > 0, use full corpus so we never return nothing
         candidate_resources.sort(key=lambda x: x[1], reverse=True)
-        min_candidates = max(1, len(candidate_resources) // 5)
-        candidates = candidate_resources[:min_candidates]
+        candidates = [(rid, sc, res) for rid, sc, res in candidate_resources if sc > 0]
+        if not candidates:
+            candidates = candidate_resources
+            fallback_used = True
 
-        # Phase 2: FTS within candidate documents
-        candidate_ids = {c[0] for c in candidates}
+        # Phase 2: passage inspection with structural narrowing
         all_evidence = []
 
         for res_id, _, res in candidates:
-            passages = self.db.get_passages_for_resource(res_id)
-            for p in passages:
+            passages = passages_by_res.get(res_id, [])
+            nodes = nodes_by_res.get(res_id, [])
+
+            # Step 2 fix: score structural nodes, narrow to passages within
+            # positively-scored node ranges
+            node_scores = {}
+            for node in nodes:
+                title_lower = node["title"].lower()
+                title_tokens = set(re.findall(r"\w+", title_lower))
+                overlap = query_tokens & title_tokens
+                if overlap:
+                    node_scores[node["node_id"]] = (
+                        len(overlap) / len(query_tokens) if query_tokens else 0,
+                        node["start_offset"],
+                        node["end_offset"],
+                    )
+
+            # Determine which passages to inspect
+            if node_scores:
+                # Only passages whose start falls within a positively-scored node
+                candidate_passages = []
+                for p in passages:
+                    for nid, (_, ns, ne) in node_scores.items():
+                        if ns <= p["start_offset"] < ne:
+                            candidate_passages.append(p)
+                            break
+            else:
+                # Fallback: inspect all passages in this document
+                candidate_passages = passages
+                if passages:
+                    fallback_used = True
+
+            for p in candidate_passages:
                 passages_considered += 1
                 text_bytes = len(p["text"].encode())
                 bytes_read += text_bytes
 
-                # Simple token match scoring for passages
+                # Token match scoring for passages
                 passage_lower = p["text"].lower()
                 matches = sum(1 for t in query_tokens if t in passage_lower)
                 if matches > 0:

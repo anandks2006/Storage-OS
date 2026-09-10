@@ -270,3 +270,13 @@ class Database:
             "SELECT * FROM passages WHERE passage_id = ?", (passage_id,)
         ).fetchone()
         return dict(row) if row else None
+
+    def get_all_nodes(self) -> list[dict]:
+        """Return all structural nodes grouped by resource_id."""
+        rows = self.connect().execute("SELECT * FROM structural_nodes").fetchall()
+        return [dict(r) for r in rows]
+
+    def get_all_passages(self) -> list[dict]:
+        """Return all passages grouped by resource_id."""
+        rows = self.connect().execute("SELECT * FROM passages").fetchall()
+        return [dict(r) for r in rows]
