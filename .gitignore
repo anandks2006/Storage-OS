@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+eggs/
+*.whl
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# SQLite runtime databases
+*.db
+*.db-wal
+*.db-shm
+
+# StorageOS generated artifacts
+storageos/indexes/
+storageos/cache/
+storageos/snapshots/
+storageos/results/
+storageos/benchmark_output/
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*
+
+# Secrets / environment
+.env
+.env.*
+*.pem
+*.key
+credentials*
+secrets*
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+
+# User data / source corpora (never commit real user documents)
+corpus/
+user_data/
+source_data/
+
+# Old subdirectory with separate git repo
+Storage OS/
