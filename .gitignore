@@ -42,9 +42,11 @@ coverage.xml
 storageos/indexes/
 storageos/cache/
 storageos/snapshots/
-storageos/results/
 storageos/benchmark_output/
 *.sqlite3
+
+# Benchmark results (generated, not source)
+results/
 
 # Logs
 *.log

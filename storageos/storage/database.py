@@ -225,7 +225,19 @@ class Database:
         )
         conn.commit()
 
+    @staticmethod
+    def _sanitize_fts_query(query: str) -> str:
+        """Escape special FTS5 characters and build a simple OR query."""
+        import re
+        tokens = re.findall(r"\w+", query)
+        if not tokens:
+            return '""'
+        # Use double-quoted phrases for each token to avoid FTS5 operator issues
+        safe_tokens = [f'"{t}"' for t in tokens]
+        return " OR ".join(safe_tokens)
+
     def search_fts(self, query: str, limit: int = 20) -> list[dict]:
+        safe_query = self._sanitize_fts_query(query)
         rows = self.connect().execute(
             """SELECT f.passage_id, f.resource_id, f.text, p.start_offset, p.end_offset, p.node_id
                FROM passages_fts f
@@ -233,7 +245,7 @@ class Database:
                WHERE passages_fts MATCH ?
                ORDER BY rank
                LIMIT ?""",
-            (query, limit),
+            (safe_query, limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
