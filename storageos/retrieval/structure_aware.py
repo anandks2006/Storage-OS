@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import re
 import time
-from collections import defaultdict
 
 from core.models import EvidenceItem, RetrievalResult
 from storage.database import Database
@@ -21,30 +20,35 @@ class StructureAwareRetriever:
         bytes_read = 0
         fallback_used = False
 
+        # Step 1: get resource list only (1 query)
         resources = self.db.get_all_resources()
         files_considered = len(resources)
 
-        # Batch-fetch all nodes and passages once (avoids N+1 queries)
-        all_nodes = self.db.get_all_nodes()
-        all_passages = self.db.get_all_passages()
-        nodes_by_res = defaultdict(list)
-        for n in all_nodes:
-            nodes_by_res[n["resource_id"]].append(n)
-        passages_by_res = defaultdict(list)
-        for p in all_passages:
-            passages_by_res[p["resource_id"]].append(p)
-
-        # Phase 1: narrow to candidate documents using heading/title matches
         query_lower = query.lower()
         query_tokens = set(re.findall(r"\w+", query_lower))
 
-        candidate_resources = []
+        # Step 2: score resources — filename scoring is free (from resource row),
+        # heading scoring requires per-resource node fetch
+        resource_scores = []
+        filename_only_candidates = []
+        need_node_fetch = []
+
         for res in resources:
             res_id = res["resource_id"]
-            nodes = nodes_by_res.get(res_id, [])
-            nodes_visited += len(nodes)
+            fname_tokens = set(re.findall(r"\w+", res["filename"].lower()))
+            fname_score = 0.5 if (query_tokens & fname_tokens) else 0.0
 
-            # Check if any heading matches query tokens
+            if fname_score > 0:
+                # Filename matches — score without fetching nodes yet
+                resource_scores.append((res_id, fname_score, res))
+                filename_only_candidates.append((res_id, fname_score, res))
+            else:
+                need_node_fetch.append((res_id, res))
+
+        # Step 3: fetch nodes only for resources that need heading scoring
+        for res_id, res in need_node_fetch:
+            nodes = self.db.get_nodes_for_resource(res_id)
+            nodes_visited += len(nodes)
             score = 0.0
             for node in nodes:
                 title_lower = node["title"].lower()
@@ -52,31 +56,24 @@ class StructureAwareRetriever:
                 overlap = query_tokens & title_tokens
                 if overlap:
                     score += len(overlap) / len(query_tokens) if query_tokens else 0
-                # Also check filename
-                fname_tokens = set(re.findall(r"\w+", res["filename"].lower()))
-                fname_overlap = query_tokens & fname_tokens
-                if fname_overlap:
-                    score += 0.5
+            resource_scores.append((res_id, score, res))
 
-            candidate_resources.append((res_id, score, res))
-
-        # Step 1 fix: retain only positively-scored candidates
-        # Fallback: if zero scored > 0, use full corpus so we never return nothing
-        candidate_resources.sort(key=lambda x: x[1], reverse=True)
-        candidates = [(rid, sc, res) for rid, sc, res in candidate_resources if sc > 0]
+        # Step 4: select positively-scored candidates (no corpus-wide floor)
+        resource_scores.sort(key=lambda x: x[1], reverse=True)
+        candidates = [(rid, sc, res) for rid, sc, res in resource_scores if sc > 0]
         if not candidates:
-            candidates = candidate_resources
+            candidates = resource_scores
             fallback_used = True
 
-        # Phase 2: passage inspection with structural narrowing
+        # Step 5: for each candidate, fetch nodes + passages selectively
         all_evidence = []
 
         for res_id, _, res in candidates:
-            passages = passages_by_res.get(res_id, [])
-            nodes = nodes_by_res.get(res_id, [])
+            nodes = self.db.get_nodes_for_resource(res_id)
+            nodes_visited += len(nodes)
+            passages = self.db.get_passages_for_resource(res_id)
 
-            # Step 2 fix: score structural nodes, narrow to passages within
-            # positively-scored node ranges
+            # Node scoring for passage filtering
             node_scores = {}
             for node in nodes:
                 title_lower = node["title"].lower()
@@ -89,9 +86,8 @@ class StructureAwareRetriever:
                         node["end_offset"],
                     )
 
-            # Determine which passages to inspect
+            # Filter passages by node ranges
             if node_scores:
-                # Only passages whose start falls within a positively-scored node
                 candidate_passages = []
                 for p in passages:
                     for nid, (_, ns, ne) in node_scores.items():
@@ -99,17 +95,16 @@ class StructureAwareRetriever:
                             candidate_passages.append(p)
                             break
             else:
-                # Fallback: inspect all passages in this document
                 candidate_passages = passages
                 if passages:
                     fallback_used = True
 
+            # Passage scoring
             for p in candidate_passages:
                 passages_considered += 1
                 text_bytes = len(p["text"].encode())
                 bytes_read += text_bytes
 
-                # Token match scoring for passages
                 passage_lower = p["text"].lower()
                 matches = sum(1 for t in query_tokens if t in passage_lower)
                 if matches > 0:
