@@ -111,6 +111,11 @@ CREATE TRIGGER IF NOT EXISTS passages_au AFTER UPDATE ON passages BEGIN
     INSERT INTO passages_fts(passages_fts, passage_id, resource_id, text) VALUES('delete', old.passage_id, old.resource_id, old.text);
     INSERT INTO passages_fts(passage_id, resource_id, text) VALUES (new.passage_id, new.resource_id, new.text);
 END;
+
+CREATE INDEX IF NOT EXISTS idx_versions_resource ON resource_versions(resource_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_passages_resource ON passages(resource_id);
+CREATE INDEX IF NOT EXISTS idx_nodes_resource ON structural_nodes(resource_id);
+CREATE INDEX IF NOT EXISTS idx_manifests_resource ON representation_manifests(resource_id);
 """
 
 
@@ -153,7 +158,7 @@ class Database:
             """INSERT INTO resources (resource_id, space_id, absolute_path, filename, extension, size, mtime, content_hash, source_type, first_seen, last_seen)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(absolute_path) DO UPDATE SET
-                   resource_id=excluded.resource_id, filename=excluded.filename,
+                   filename=excluded.filename,
                    extension=excluded.extension, size=excluded.size, mtime=excluded.mtime,
                    content_hash=excluded.content_hash, source_type=excluded.source_type,
                    last_seen=excluded.last_seen""",

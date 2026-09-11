@@ -203,12 +203,33 @@ def build_db():
 
     # Verify
     print(f"\nVerifying...", end=" ", flush=True)
-    row = conn.execute("SELECT COUNT(*) FROM passages_fts").fetchone()
-    print(f"FTS rows: {row[0]:,}")
-    row = conn.execute("SELECT COUNT(*) FROM passages").fetchone()
-    print(f"Passage rows: {row[0]:,}")
-    row = conn.execute("SELECT COUNT(*) FROM resources").fetchone()
-    print(f"Resource rows: {row[0]:,}")
+    db_fts = conn.execute("SELECT COUNT(*) FROM passages_fts").fetchone()[0]
+    db_pass = conn.execute("SELECT COUNT(*) FROM passages").fetchone()[0]
+    db_res = conn.execute("SELECT COUNT(*) FROM resources").fetchone()[0]
+    print(f"FTS rows: {db_fts:,}")
+    print(f"Passage rows: {db_pass:,}")
+    print(f"Resource rows: {db_res:,}")
+
+    # CRITICAL: Conservation checks — fail hard on mismatch
+    errors = []
+    if db_res != resource_count:
+        errors.append(f"Resource conservation: batched={resource_count:,}, stored={db_res:,}, lost={resource_count - db_res:,}")
+    if db_pass != passage_count:
+        errors.append(f"Passage conservation: batched={passage_count:,}, stored={db_pass:,}, lost={passage_count - db_pass:,}")
+    if db_fts != db_pass:
+        errors.append(f"FTS conservation: passages={db_pass:,}, fts={db_fts:,}, delta={db_pass - db_fts:,}")
+
+    if errors:
+        print(f"\n{'='*60}")
+        print(f"INTEGRITY VIOLATION — INGESTION ABORTED")
+        print(f"{'='*60}")
+        for e in errors:
+            print(f"  FAIL: {e}")
+        print(f"\nData may be corrupted. Do NOT use this DB for benchmarks.")
+        conn.close()
+        raise RuntimeError("Ingestion conservation check failed: " + "; ".join(errors))
+
+    print(f"\nConservation checks PASSED")
 
     # Test FTS search
     t2 = time.time()
