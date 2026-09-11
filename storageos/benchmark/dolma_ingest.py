@@ -129,7 +129,7 @@ def build_db():
                 text = rec.get("text", "")
                 text_bytes = len(text.encode("utf-8"))
 
-                resource_id = f"r-{doc_id[:16]}"
+                resource_id = f"r-{doc_id}"
                 abs_path = f"dolma://{shard_name}/{doc_id}"
 
                 res_batch.append((
@@ -143,7 +143,7 @@ def build_db():
                     start = i * PASSAGE_MAX_CHARS
                     end = start + len(chunk)
                     pass_batch.append((
-                        f"p-{doc_id[:16]}-{i:04d}",
+                        f"p-{doc_id}-{i:04d}",
                         resource_id, None, None,
                         chunk, start, end
                     ))
